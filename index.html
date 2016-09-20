@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>Heatmap</title>
+  <meta name="description" content="">
+  <meta name="author" content="AK">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="./favicon.ico">
+
+ <!-- CSS -->
+  <link rel="stylesheet" href="./css/font.css" type="text/css">
+  <link rel="stylesheet" href="./css/normalize.css" type="text/css">
+  <link rel="stylesheet" href="./css/skeleton.css" type="text/css">
+  <link rel="stylesheet" href="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.css?ver=4.4.5" type ="text/css">
+  <link rel="stylesheet" href="./css/app.css" type="text/css">
+
+<!-- JS -->
+<script src="./js/jquery.min.js"></script>
+<script src="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.js"></script>
+<script src="./js/keys.js"></script>
+</head>
+
+<!-- Content -->
+
+<body>
+   <div class="container u-full-width">
+      <div class="row">
+         <div class="twelve columns">
+            <h4 class="hero-heading">A Mixpanel Dashboard Example</h4>
+         </div>
+      </div>
+      <div class="row" id="emptySpace" style="height:30px;"></div>
+      <a id="dataRefresh" class="button button-primary">Refresh Query</a> 
+      <div class="row" id="mainContent">
+         <div id="DAU">
+            <h2>XX</h2>
+            <p>Active Users</p>
+         </div>
+         
+         <div id="dateSelect" style="float: left;" style="mixpanel-platform-input-date mixpanel-platform-input"></div>
+      </div>
+   </div>
+   <div class="container u-full-width">
+      <div class="row">
+         <div id="map"></div>
+      </div>
+   </div>
+
+<!-- make the queries -->
+<script language="javascript">
+   
+   var dateSelect = $('#dateSelect').MPDatepicker();
+   
+   function getDateStr (date) {
+
+        var month = date.getMonth() + 1;
+        var day = date.getDate();
+        if (month < 10) month = '0' + month;
+        if (day < 10) day = '0' + day;
+        return date.getFullYear() + '-' + month + '-' + day;
+    };
+    
+   MP.api.setCredentials(MIXPANEL_API_SECRET_KEY);
+   
+   function update_active_users() {
+
+      var t0 = performance.now();
+
+      var queryParams = {
+              fromDate: getDateStr(dateSelect.MPDatepicker('value').from),
+              toDate: getDateStr(dateSelect.MPDatepicker('value').to),
+              event_selectors: [{event: "User logged in"}],
+              GPSCountry: null
+          };
+                      
+      MP.api.jql(
+         function main() {
+            return Events({
+               from_date: params.fromDate,
+               to_date: params.toDate,
+               event_selectors: params.event_selectors
+            })
+        //get just Sign Up events
+//        .filter(
+//           function(event){ 
+//              if (params.GPSCountry && event.properties.GPSCountry != params.GPSCountry) {
+//                 return false
+//              }
+//              return true 
+//           })
+        //get the number of signups per user
+        .groupByUser(
+           function(count, events) {
+               count = count || 0;
+               return count + events.length;
+            })
+        //count unique sign ups
+        .reduce(mixpanel.reducer.count())
+      }, queryParams)
+      .done(function(results){
+           //update the view
+           $('#DAU h2').text(results);
+           var t1 = performance.now();
+           console.log("Update Active Users took " + (t1 - t0) + " milliseconds.")
+         });
+   };
+
+   // google map 
+   var map, heatmap, heatmapdata;   
+   
+   function initMap() {
+         
+         var map_options = {
+               mapTypeId: google.maps.MapTypeId.SATELLITE,
+               draggableCursor: 'crosshair',
+               mapTypeControl: true,
+               scaleControl: true,
+               streetViewControl: false,
+               overviewMapControl: false,
+               overviewMapControlOptions: {
+                  opened: false
+                }
+         };
+         
+         map = new google.maps.Map(document.getElementById('map'), map_options);
+         heatmapdata = new google.maps.MVCArray([]);
+         heatmap = new google.maps.visualization.HeatmapLayer({
+            data: heatmapdata,
+            map: map
+         })
+         
+         google.maps.event.addListenerOnce(map, "idle", function(){
+            getPoints();
+            heatmap.setMap(map);
+         });
+   }
+   
+   
+   function getPoints() {
+      
+      var queryParams = {
+              fromDate: getDateStr(dateSelect.MPDatepicker('value').from),
+              toDate: getDateStr(dateSelect.MPDatepicker('value').to)
+          }
+      var bounds = new google.maps.LatLngBounds();
+      heatmapdata.clear();
+
+      MP.api.jql(
+         function main() {
+            return Events({
+               from_date: params.fromDate,
+               to_date: params.toDate
+            })
+         }, queryParams)
+         .done(function(results){
+            results.forEach( function (event) {
+               lon = event.properties.Longitude;
+               lat = event.properties.Latitude;
+               if (lat && lon) {
+                  heatmapdata.push(new google.maps.LatLng(lat, lon));
+                  bounds.extend(new google.maps.LatLng(lat, lon));
+               };
+            });
+            if (!bounds.isEmpty()) {
+               map.fitBounds(bounds);
+            } else {
+               //zoom to central position
+               map.setCenter({lat: 29.06957940879154, lng: -23.0717797217859});
+               map.setZoom(2);
+            };
+         });
+      };
+
+   $(document).on("ready", function() {
+     update_active_users();
+     // Map and points are updated via callback=initMap from google api
+   });
+   
+   $('#dataRefresh').on('click', function() { 
+     update_active_users();
+     getPoints();
+   });
+   
+   dateSelect.on('change', function() { 
+     update_active_users();
+     getPoints();
+   });
+//<script async defer
+//   src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCarKTFLDa3Avsfm41GdA9PNXGdddtHUPI&libraries=visualization&callback=initMap">
+
+</script>
+   
+<script async defer 
+   src="https://maps.googleapis.com/maps/api/js?libraries=visualization&callback=initMap" 
+   key=GOOGLE_MAPS_KEY>
+</script>
+
+
+</body></html>
